@@ -53,11 +53,49 @@ export interface ExportOptions {
   offsetX: number;
   offsetY: number;
   blurBackground: boolean;
+  textOverlay?: TextOverlay | null;
   onProgress?: (pct: number) => void;
 }
 
+export interface TextOverlay {
+  text: string;
+  /** position relative to crop frame, normalized 0..1 (center of text) */
+  posX: number;
+  posY: number;
+  /** font size in px relative to a 1080-tall reference frame */
+  size: number;
+  color: string; // hex like #ffffff
+  bold: boolean;
+  highlight: boolean;
+}
+
+const FONT_REGULAR_URL = "https://cdn.jsdelivr.net/npm/@fontsource/inter@5.0.18/files/inter-latin-400-normal.woff";
+// drawtext needs TTF/OTF; use a TTF
+const FONT_TTF_URL = "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf";
+const FONT_TTF_BOLD_URL = FONT_TTF_URL; // variable font handles weight
+
+let fontsLoaded = false;
+async function ensureFonts(ffmpeg: FFmpeg) {
+  if (fontsLoaded) return;
+  const res = await fetch(FONT_TTF_URL);
+  if (!res.ok) throw new Error("Failed to load font");
+  const buf = new Uint8Array(await res.arrayBuffer());
+  await ffmpeg.writeFile("font.ttf", buf);
+  fontsLoaded = true;
+}
+
+function escapeDrawtext(s: string): string {
+  // Escape characters special to drawtext: \ : ' %
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'")
+    .replace(/%/g, "\\%")
+    .replace(/,/g, "\\,");
+}
+
 export async function exportClip(opts: ExportOptions): Promise<Blob> {
-  const { file, start, end, aspect, zoom, offsetX, offsetY, blurBackground, onProgress } = opts;
+  const { file, start, end, aspect, zoom, offsetX, offsetY, blurBackground, textOverlay, onProgress } = opts;
   const ffmpeg = await getFFmpeg();
   const preset = ASPECT_PRESETS[aspect];
   const W = preset.w;
@@ -107,15 +145,31 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   const cropY = `(in_h-${H})/2 + ${offsetY}*(in_h-${H})/2`;
   const fgCrop = `crop=${W}:${H}:${cropX}:${cropY}`;
 
+  // Build drawtext suffix if text overlay is requested
+  let drawtext = "";
+  if (textOverlay && textOverlay.text.trim()) {
+    await ensureFonts(ffmpeg);
+    const t = escapeDrawtext(textOverlay.text);
+    // Scale font size relative to height (size is in preview px @ ~360 tall, scale to H)
+    const fontPx = Math.max(12, Math.round(textOverlay.size * (H / 600)));
+    const x = `(w-text_w)/2 + (${textOverlay.posX} - 0.5)*w`;
+    const y = `(h-text_h)/2 + (${textOverlay.posY} - 0.5)*h`;
+    const box = textOverlay.highlight ? `:box=1:boxcolor=black@0.55:boxborderw=${Math.round(fontPx * 0.3)}` : "";
+    // Bold via fontfile is limited; emulate with borderw for non-highlight, otherwise rely on size
+    const bold = textOverlay.bold && !textOverlay.highlight ? `:borderw=${Math.max(2, Math.round(fontPx * 0.06))}:bordercolor=black@0.7` : "";
+    drawtext =
+      `,drawtext=fontfile=font.ttf:text='${t}':fontcolor=${textOverlay.color}:fontsize=${fontPx}:x=${x}:y=${y}${box}${bold}`;
+  }
+
   let filter: string;
   if (blurBackground) {
     filter =
       `[0:v]split=2[bg][fg];` +
       `[bg]scale=w=${W}:h=${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=luma_radius=40:luma_power=2[bgb];` +
       `[fg]${fgScale},${fgCrop}[fgc];` +
-      `[bgb][fgc]overlay=(W-w)/2:(H-h)/2[outv]`;
+      `[bgb][fgc]overlay=(W-w)/2:(H-h)/2${drawtext}[outv]`;
   } else {
-    filter = `[0:v]${fgScale},${fgCrop}[outv]`;
+    filter = `[0:v]${fgScale},${fgCrop}${drawtext}[outv]`;
   }
 
   const outputName = "output.mp4";
