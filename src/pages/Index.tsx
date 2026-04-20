@@ -7,9 +7,10 @@ import { PreviewPanel } from "@/components/clipping/PreviewPanel";
 import { FormatPanel } from "@/components/clipping/FormatPanel";
 import { TrimPanel } from "@/components/clipping/TrimPanel";
 import { ExportPanel, type ExportState } from "@/components/clipping/ExportPanel";
+import { TextOverlayPanel } from "@/components/clipping/TextOverlayPanel";
 import { Faq } from "@/components/clipping/Faq";
 import { Footer } from "@/components/clipping/Footer";
-import { exportClip, type AspectRatio } from "@/lib/ffmpeg";
+import { exportClip, type AspectRatio, type TextOverlay } from "@/lib/ffmpeg";
 import { toast } from "sonner";
 
 const Index = () => {
@@ -24,6 +25,7 @@ const Index = () => {
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
   const [blurBackground, setBlurBackground] = useState(true);
+  const [textOverlay, setTextOverlay] = useState<TextOverlay | null>(null);
 
   const [exportState, setExportState] = useState<ExportState>({ status: "idle" });
   const editorRef = useRef<HTMLDivElement>(null);
@@ -61,6 +63,7 @@ const Index = () => {
         offsetX,
         offsetY,
         blurBackground,
+        textOverlay,
         onProgress: (p) => setExportState({ status: "exporting", progress: p }),
       });
       const u = URL.createObjectURL(blob);
@@ -113,6 +116,8 @@ const Index = () => {
                   startTime={start}
                   endTime={end}
                   onDurationLoaded={onDuration}
+                  textOverlay={textOverlay}
+                  onTextPosChange={(x, y) => setTextOverlay((o) => o ? { ...o, posX: x, posY: y } : o)}
                 />
                 <FormatPanel
                   aspect={aspect}
@@ -131,7 +136,10 @@ const Index = () => {
                 start={start}
                 end={end}
                 onChange={(s, e) => { setStart(s); setEnd(e); }}
+                url={url}
               />
+
+              <TextOverlayPanel overlay={textOverlay} onChange={setTextOverlay} />
 
               <ExportPanel
                 aspect={aspect}

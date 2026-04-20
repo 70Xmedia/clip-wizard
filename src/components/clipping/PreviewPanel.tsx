@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ASPECT_PRESETS, type AspectRatio } from "@/lib/ffmpeg";
+import type { TextOverlay } from "@/lib/ffmpeg";
 
 interface PreviewPanelProps {
   url: string;
@@ -13,11 +14,14 @@ interface PreviewPanelProps {
   startTime: number;
   endTime: number;
   onDurationLoaded: (d: number) => void;
+  textOverlay?: TextOverlay | null;
+  onTextPosChange?: (x: number, y: number) => void;
 }
 
 export function PreviewPanel({
   url, aspect, zoom, offsetX, offsetY, onOffsetChange,
   blurBackground, startTime, endTime, onDurationLoaded,
+  textOverlay, onTextPosChange,
 }: PreviewPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const bgRef = useRef<HTMLVideoElement>(null);
@@ -26,6 +30,7 @@ export function PreviewPanel({
   const [loop, setLoop] = useState(true);
   const [muted, setMuted] = useState(true);
   const [dragging, setDragging] = useState(false);
+  const [draggingText, setDraggingText] = useState(false);
 
   const preset = ASPECT_PRESETS[aspect];
   const aspectRatio = preset.w / preset.h;
@@ -55,26 +60,31 @@ export function PreviewPanel({
 
   // Drag handling
   useEffect(() => {
-    if (!dragging) return;
+    if (!dragging && !draggingText) return;
     const onMove = (e: PointerEvent) => {
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      // movementX/Y for incremental drag mapped to -1..1 normalized over container
-      const dx = (e.movementX / rect.width) * 2;
-      const dy = (e.movementY / rect.height) * 2;
-      const nx = Math.max(-1, Math.min(1, offsetX + dx));
-      const ny = Math.max(-1, Math.min(1, offsetY + dy));
-      onOffsetChange(nx, ny);
+      if (draggingText && textOverlay && onTextPosChange) {
+        const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+        onTextPosChange(x, y);
+      } else if (dragging) {
+        const dx = (e.movementX / rect.width) * 2;
+        const dy = (e.movementY / rect.height) * 2;
+        const nx = Math.max(-1, Math.min(1, offsetX + dx));
+        const ny = Math.max(-1, Math.min(1, offsetY + dy));
+        onOffsetChange(nx, ny);
+      }
     };
-    const onUp = () => setDragging(false);
+    const onUp = () => { setDragging(false); setDraggingText(false); };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [dragging, offsetX, offsetY, onOffsetChange]);
+  }, [dragging, draggingText, offsetX, offsetY, onOffsetChange, textOverlay, onTextPosChange]);
 
   // Foreground transform: scale + translate
   const translateX = offsetX * 50; // -50% .. 50%
@@ -129,6 +139,29 @@ export function PreviewPanel({
           {safeZone && aspect === "9:16" && (
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute inset-x-4 top-[10%] bottom-[18%] border border-signal-green/40 border-dashed" />
+            </div>
+          )}
+
+          {/* Text overlay */}
+          {textOverlay && textOverlay.text.trim() && (
+            <div
+              className="absolute select-none cursor-grab active:cursor-grabbing"
+              style={{
+                left: `${textOverlay.posX * 100}%`,
+                top: `${textOverlay.posY * 100}%`,
+                transform: "translate(-50%, -50%)",
+                color: textOverlay.color,
+                fontSize: `${textOverlay.size * 0.4}px`,
+                fontWeight: textOverlay.bold ? 800 : 500,
+                textShadow: textOverlay.bold && !textOverlay.highlight ? "0 0 4px rgba(0,0,0,0.7)" : undefined,
+                background: textOverlay.highlight ? "rgba(0,0,0,0.55)" : undefined,
+                padding: textOverlay.highlight ? "0.15em 0.4em" : undefined,
+                lineHeight: 1.2,
+                whiteSpace: "pre",
+              }}
+              onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); setDraggingText(true); }}
+            >
+              {textOverlay.text}
             </div>
           )}
         </div>
