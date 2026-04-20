@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TopBar } from "@/components/clipping/TopBar";
 import { Hero } from "@/components/clipping/Hero";
+import { HowItWorks } from "@/components/clipping/HowItWorks";
 import { UploadPanel } from "@/components/clipping/UploadPanel";
 import { PreviewPanel } from "@/components/clipping/PreviewPanel";
 import { FormatPanel } from "@/components/clipping/FormatPanel";
@@ -85,6 +86,7 @@ const Index = () => {
 
       <TopBar onStart={scrollToEditor} />
       <Hero onStart={scrollToEditor} />
+      <HowItWorks onStart={scrollToEditor} />
 
       <div ref={editorRef} className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
         <div className="mb-8">

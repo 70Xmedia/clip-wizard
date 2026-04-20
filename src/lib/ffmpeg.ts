@@ -64,10 +64,31 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   const H = preset.h;
   const duration = Math.max(0.1, end - start);
 
+  // Progress: prefer log-based parsing (reliable across versions), fall back to native event
+  let lastPct = 0;
+  const report = (pct: number) => {
+    if (!onProgress) return;
+    const v = Math.min(99, Math.max(lastPct, Math.round(pct)));
+    if (v !== lastPct) {
+      lastPct = v;
+      onProgress(v);
+    }
+  };
   const progressHandler = ({ progress }: { progress: number }) => {
-    if (onProgress) onProgress(Math.min(99, Math.max(0, Math.round(progress * 100))));
+    if (isFinite(progress) && progress > 0) report(progress * 100);
+  };
+  const logHandler = ({ message }: { message: string }) => {
+    // Parse "time=00:00:01.23"
+    const m = message.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    if (m) {
+      const t = (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]);
+      report((t / duration) * 100);
+    }
   };
   ffmpeg.on("progress", progressHandler);
+  ffmpeg.on("log", logHandler);
+  // Kick progress so the UI doesn't sit at 0
+  if (onProgress) onProgress(1);
 
   const inputName = "input." + (file.name.split(".").pop() || "mp4");
   await ffmpeg.writeFile(inputName, await fetchFile(file));
@@ -98,16 +119,18 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   }
 
   const outputName = "output.mp4";
+  // Input-side seek (-ss before -i) is fast; -t limits duration for both progress + output
   const args = [
     "-ss", String(start),
-    "-t", String(duration),
     "-i", inputName,
+    "-t", String(duration),
     "-filter_complex", filter,
     "-map", "[outv]",
     "-map", "0:a?",
     "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-crf", "23",
+    "-preset", "ultrafast",
+    "-tune", "fastdecode",
+    "-crf", "26",
     "-pix_fmt", "yuv420p",
     "-c:a", "aac",
     "-b:a", "128k",
@@ -118,6 +141,7 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   await ffmpeg.exec(args);
   const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
   ffmpeg.off("progress", progressHandler);
+  ffmpeg.off("log", logHandler);
 
   // Cleanup
   try { await ffmpeg.deleteFile(inputName); } catch {}
