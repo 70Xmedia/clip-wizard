@@ -1,15 +1,17 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { formatTime } from "@/lib/ffmpeg";
+import { ThumbnailScrubber } from "./ThumbnailScrubber";
 
 interface TrimPanelProps {
   duration: number;
   start: number;
   end: number;
   onChange: (start: number, end: number) => void;
+  url: string;
 }
 
-export function TrimPanel({ duration, start, end, onChange }: TrimPanelProps) {
+export function TrimPanel({ duration, start, end, onChange, url }: TrimPanelProps) {
   const clipDuration = Math.max(0, end - start);
   const tooLong = clipDuration > 60;
 
@@ -30,6 +32,19 @@ export function TrimPanel({ duration, start, end, onChange }: TrimPanelProps) {
       </header>
 
       <p className="text-sm text-muted-foreground mb-4">Select your clip start and end time</p>
+
+      {url && duration > 0 && (
+        <div className="relative">
+          <ThumbnailScrubber url={url} duration={duration} />
+          {/* Selection overlay */}
+          <div className="pointer-events-none absolute inset-y-0" style={{
+            left: `${(start / duration) * 100}%`,
+            width: `${((end - start) / duration) * 100}%`,
+          }}>
+            <div className="h-full border-x-2 border-signal-green bg-signal-green/15" />
+          </div>
+        </div>
+      )}
 
       <div className="flex justify-between font-mono text-sm mb-3">
         <span>
