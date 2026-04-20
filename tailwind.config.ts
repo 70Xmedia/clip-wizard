@@ -19,6 +19,12 @@ export default {
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        signal: {
+          green: "hsl(var(--signal-green))",
+          blue: "hsl(var(--signal-blue))",
+          red: "hsl(var(--signal-red))",
+        },
+        surface: "hsl(var(--surface-panel))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
@@ -57,6 +63,15 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+      },
+      fontFamily: {
+        sans: ['"Space Grotesk"', "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+      },
+      boxShadow: {
+        "glow-green": "0 0 20px hsl(var(--signal-green) / 0.35)",
+        "glow-red": "0 0 24px hsl(var(--signal-red) / 0.5)",
+        "glow-blue": "0 0 20px hsl(var(--signal-blue) / 0.4)",
       },
       borderRadius: {
         lg: "var(--radius)",
