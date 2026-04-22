@@ -113,6 +113,36 @@ function escapeDrawtext(s: string): string {
     .replace(/,/g, "\\,");
 }
 
+function getReducedPreset(aspect: AspectRatio) {
+  switch (aspect) {
+    case "9:16":
+      return { w: 720, h: 1280 };
+    case "1:1":
+      return { w: 720, h: 720 };
+    case "4:5":
+      return { w: 720, h: 900 };
+  }
+}
+
+function buildDrawtextFilter(textOverlay: TextOverlay, H: number) {
+  const t = escapeDrawtext(textOverlay.text);
+  const fontPx = Math.max(12, Math.round(textOverlay.size * (H / 600)));
+  const x = `(w-text_w)/2 + (${textOverlay.posX} - 0.5)*w`;
+  const y = `(h-text_h)/2 + (${textOverlay.posY} - 0.5)*h`;
+  const box = textOverlay.highlight ? `:box=1:boxcolor=black@0.55:boxborderw=${Math.round(fontPx * 0.3)}` : "";
+  const bold = textOverlay.bold && !textOverlay.highlight ? `:borderw=${Math.max(2, Math.round(fontPx * 0.06))}:bordercolor=black@0.7` : "";
+  return `drawtext=fontfile=font.ttf:text='${t}':fontcolor=${textOverlay.color}:fontsize=${fontPx}:x=${x}:y=${y}${box}${bold}`;
+}
+
+function buildForegroundChain(W: number, H: number, zoom: number, offsetX: number, offsetY: number) {
+  const z = Math.max(1, zoom);
+  const fgScale = `scale=w=${W}*${z}:h=${H}*${z}:force_original_aspect_ratio=increase`;
+  const cropX = `(in_w-${W})/2 + ${offsetX}*(in_w-${W})/2`;
+  const cropY = `(in_h-${H})/2 + ${offsetY}*(in_h-${H})/2`;
+  const fgCrop = `crop=${W}:${H}:${cropX}:${cropY}`;
+  return { fgScale, fgCrop };
+}
+
 export async function exportClip(opts: ExportOptions): Promise<Blob> {
   const { file, start, end, aspect, zoom, offsetX, offsetY, blurBackground, textOverlay, onProgress } = opts;
   console.log("[export] starting", { name: file.name, size: file.size, start, end, aspect, zoom, blurBackground });
@@ -121,9 +151,8 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   console.log("[export] ffmpeg ready");
   if (onProgress) onProgress(3);
   const preset = ASPECT_PRESETS[aspect];
-  const W = preset.w;
-  const H = preset.h;
   const duration = Math.max(0.1, end - start);
+  const recentLogs: string[] = [];
 
   // Progress: prefer log-based parsing (reliable across versions), fall back to native event
   let lastPct = 0;
@@ -139,6 +168,8 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
     if (isFinite(progress) && progress > 0) report(progress * 100);
   };
   const logHandler = ({ message }: { message: string }) => {
+    recentLogs.push(message);
+    if (recentLogs.length > 80) recentLogs.shift();
     // Parse "time=00:00:01.23"
     const m = message.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
     if (m) {
@@ -159,81 +190,94 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   console.log("[export] input written, bytes:", buf.byteLength);
   if (onProgress) onProgress(8);
 
-  // Build filter graph
-  // Foreground: scale to cover the target frame with `zoom` * cover scale, then translate by offsets, then crop to W x H
-  // We use scale to cover then crop.
-  // For "cover" we compute scaleExpr at runtime via ffmpeg expressions:
-  //   scale=w='if(gt(a,A),-2,W*z)':h='if(gt(a,A),H*z,-2)' where A = W/H, z = zoom
-  // Simpler: scale the longer needed dimension. Use force_original_aspect_ratio=increase then crop.
-  const z = Math.max(1, zoom);
-  const fgScale = `scale=w=${W}*${z}:h=${H}*${z}:force_original_aspect_ratio=increase`;
-  // After scale, dimensions are >= W*z x H*z. Crop to W x H with offset.
-  // Offset range: -1..1 maps to remaining slack (in_w - W) / 2.
-  const cropX = `(in_w-${W})/2 + ${offsetX}*(in_w-${W})/2`;
-  const cropY = `(in_h-${H})/2 + ${offsetY}*(in_h-${H})/2`;
-  const fgCrop = `crop=${W}:${H}:${cropX}:${cropY}`;
-
-  // Build drawtext suffix if text overlay is requested
-  let drawtext = "";
-  if (textOverlay && textOverlay.text.trim()) {
+  let canUseText = Boolean(textOverlay && textOverlay.text.trim());
+  if (canUseText) {
     try {
       await ensureFonts(ffmpeg);
-      const t = escapeDrawtext(textOverlay.text);
-      const fontPx = Math.max(12, Math.round(textOverlay.size * (H / 600)));
-      const x = `(w-text_w)/2 + (${textOverlay.posX} - 0.5)*w`;
-      const y = `(h-text_h)/2 + (${textOverlay.posY} - 0.5)*h`;
-      const box = textOverlay.highlight ? `:box=1:boxcolor=black@0.55:boxborderw=${Math.round(fontPx * 0.3)}` : "";
-      const bold = textOverlay.bold && !textOverlay.highlight ? `:borderw=${Math.max(2, Math.round(fontPx * 0.06))}:bordercolor=black@0.7` : "";
-      drawtext =
-        `,drawtext=fontfile=font.ttf:text='${t}':fontcolor=${textOverlay.color}:fontsize=${fontPx}:x=${x}:y=${y}${box}${bold}`;
-    } catch (e) {
-      console.warn("[export] Skipping text overlay due to font load error", e);
+    } catch {
+      canUseText = false;
     }
   }
 
-  let filter: string;
-  if (blurBackground) {
-    filter =
-      `[0:v]split=2[bg][fg];` +
-      `[bg]scale=w=${W}:h=${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=luma_radius=40:luma_power=2[bgb];` +
-      `[fg]${fgScale},${fgCrop}[fgc];` +
-      `[bgb][fgc]overlay=(W-w)/2:(H-h)/2${drawtext}[outv]`;
-  } else {
-    filter = `[0:v]${fgScale},${fgCrop}${drawtext}[outv]`;
-  }
-
   const outputName = "output.mp4";
-  // Input-side seek (-ss before -i) is fast; -t limits duration for both progress + output
-  const args = [
-    "-ss", String(start),
-    "-i", inputName,
-    "-t", String(duration),
-    "-filter_complex", filter,
-    "-map", "[outv]",
-    "-map", "0:a?",
-    "-c:v", "libx264",
-    "-preset", "ultrafast",
-    "-tune", "fastdecode",
-    "-crf", "26",
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-movflags", "+faststart",
-    outputName,
+  const reduced = getReducedPreset(aspect);
+  const strategies = [
+    { label: "full-requested", w: preset.w, h: preset.h, blur: blurBackground, text: canUseText },
+    { label: "reduced-requested", w: reduced.w, h: reduced.h, blur: blurBackground, text: canUseText },
+    { label: "reduced-no-blur", w: reduced.w, h: reduced.h, blur: false, text: canUseText },
+    { label: "reduced-no-blur-no-text", w: reduced.w, h: reduced.h, blur: false, text: false },
   ];
 
-  console.log("[export] running ffmpeg", args.join(" "));
-  const code = await ffmpeg.exec(args);
-  console.log("[export] ffmpeg exec returned with code:", code);
-  const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
-  console.log("[export] output bytes:", data.byteLength);
-  ffmpeg.off("progress", progressHandler);
-  ffmpeg.off("log", logHandler);
+  try {
+    for (let i = 0; i < strategies.length; i += 1) {
+      const strategy = strategies[i];
+      const { fgScale, fgCrop } = buildForegroundChain(strategy.w, strategy.h, zoom, offsetX, offsetY);
+      const drawtext = strategy.text && textOverlay ? `,${buildDrawtextFilter(textOverlay, strategy.h)}` : "";
 
-  // Cleanup
-  try { await ffmpeg.deleteFile(inputName); } catch {}
-  try { await ffmpeg.deleteFile(outputName); } catch {}
+      let args: string[];
+      if (strategy.blur) {
+        const filter =
+          `[0:v]split=2[bg][fg];` +
+          `[bg]scale=w=${strategy.w}:h=${strategy.h}:force_original_aspect_ratio=increase,crop=${strategy.w}:${strategy.h},boxblur=luma_radius=18:luma_power=1[bgb];` +
+          `[fg]${fgScale},${fgCrop}[fgc];` +
+          `[bgb][fgc]overlay=(W-w)/2:(H-h)/2${drawtext}[outv]`;
 
-  if (onProgress) onProgress(100);
-  return new Blob([data.buffer as ArrayBuffer], { type: "video/mp4" });
+        args = [
+          "-ss", String(start),
+          "-i", inputName,
+          "-t", String(duration),
+          "-filter_complex", filter,
+          "-map", "[outv]",
+          "-map", "0:a?",
+          "-c:v", "libx264",
+          "-preset", "ultrafast",
+          "-crf", strategy.w < preset.w ? "30" : "28",
+          "-pix_fmt", "yuv420p",
+          "-c:a", "aac",
+          "-b:a", "96k",
+          "-movflags", "+faststart",
+          outputName,
+        ];
+      } else {
+        const vf = `${fgScale},${fgCrop}${drawtext}`;
+        args = [
+          "-ss", String(start),
+          "-i", inputName,
+          "-t", String(duration),
+          "-vf", vf,
+          "-map", "0:v:0",
+          "-map", "0:a?",
+          "-c:v", "libx264",
+          "-preset", "ultrafast",
+          "-crf", strategy.w < preset.w ? "30" : "28",
+          "-pix_fmt", "yuv420p",
+          "-c:a", "aac",
+          "-b:a", "96k",
+          "-movflags", "+faststart",
+          outputName,
+        ];
+      }
+
+      try {
+        if (onProgress) onProgress(Math.max(lastPct, 10 + i * 5));
+        console.log("[export] attempting strategy", strategy, args.join(" "));
+        try { await ffmpeg.deleteFile(outputName); } catch {}
+        const code = await ffmpeg.exec(args);
+        if (code !== 0) throw new Error(`FFmpeg exited with code ${code}`);
+        const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
+        console.log("[export] strategy succeeded", strategy.label, data.byteLength);
+        if (onProgress) onProgress(100);
+        return new Blob([data.buffer as ArrayBuffer], { type: "video/mp4" });
+      } catch (error) {
+        console.error("[export] strategy failed", strategy.label, error, recentLogs.slice(-12));
+      }
+    }
+
+    throw new Error(`All export strategies failed. Recent ffmpeg logs: ${recentLogs.slice(-8).join(" | ")}`);
+  } finally {
+    ffmpeg.off("progress", progressHandler);
+    ffmpeg.off("log", logHandler);
+    try { await ffmpeg.deleteFile(inputName); } catch {}
+    try { await ffmpeg.deleteFile(outputName); } catch {}
+  }
 }
