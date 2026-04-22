@@ -115,7 +115,11 @@ function escapeDrawtext(s: string): string {
 
 export async function exportClip(opts: ExportOptions): Promise<Blob> {
   const { file, start, end, aspect, zoom, offsetX, offsetY, blurBackground, textOverlay, onProgress } = opts;
+  console.log("[export] starting", { name: file.name, size: file.size, start, end, aspect, zoom, blurBackground });
+  if (onProgress) onProgress(1);
   const ffmpeg = await getFFmpeg();
+  console.log("[export] ffmpeg ready");
+  if (onProgress) onProgress(3);
   const preset = ASPECT_PRESETS[aspect];
   const W = preset.w;
   const H = preset.h;
@@ -145,10 +149,15 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   ffmpeg.on("progress", progressHandler);
   ffmpeg.on("log", logHandler);
   // Kick progress so the UI doesn't sit at 0
-  if (onProgress) onProgress(1);
+  if (onProgress) onProgress(5);
 
-  const inputName = "input." + (file.name.split(".").pop() || "mp4");
-  await ffmpeg.writeFile(inputName, await fetchFile(file));
+  const ext = (file.name.split(".").pop() || "mp4").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const inputName = "input." + (ext || "mp4");
+  console.log("[export] writing input file to FS:", inputName);
+  const buf = new Uint8Array(await file.arrayBuffer());
+  await ffmpeg.writeFile(inputName, buf);
+  console.log("[export] input written, bytes:", buf.byteLength);
+  if (onProgress) onProgress(8);
 
   // Build filter graph
   // Foreground: scale to cover the target frame with `zoom` * cover scale, then translate by offsets, then crop to W x H
@@ -167,17 +176,19 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   // Build drawtext suffix if text overlay is requested
   let drawtext = "";
   if (textOverlay && textOverlay.text.trim()) {
-    await ensureFonts(ffmpeg);
-    const t = escapeDrawtext(textOverlay.text);
-    // Scale font size relative to height (size is in preview px @ ~360 tall, scale to H)
-    const fontPx = Math.max(12, Math.round(textOverlay.size * (H / 600)));
-    const x = `(w-text_w)/2 + (${textOverlay.posX} - 0.5)*w`;
-    const y = `(h-text_h)/2 + (${textOverlay.posY} - 0.5)*h`;
-    const box = textOverlay.highlight ? `:box=1:boxcolor=black@0.55:boxborderw=${Math.round(fontPx * 0.3)}` : "";
-    // Bold via fontfile is limited; emulate with borderw for non-highlight, otherwise rely on size
-    const bold = textOverlay.bold && !textOverlay.highlight ? `:borderw=${Math.max(2, Math.round(fontPx * 0.06))}:bordercolor=black@0.7` : "";
-    drawtext =
-      `,drawtext=fontfile=font.ttf:text='${t}':fontcolor=${textOverlay.color}:fontsize=${fontPx}:x=${x}:y=${y}${box}${bold}`;
+    try {
+      await ensureFonts(ffmpeg);
+      const t = escapeDrawtext(textOverlay.text);
+      const fontPx = Math.max(12, Math.round(textOverlay.size * (H / 600)));
+      const x = `(w-text_w)/2 + (${textOverlay.posX} - 0.5)*w`;
+      const y = `(h-text_h)/2 + (${textOverlay.posY} - 0.5)*h`;
+      const box = textOverlay.highlight ? `:box=1:boxcolor=black@0.55:boxborderw=${Math.round(fontPx * 0.3)}` : "";
+      const bold = textOverlay.bold && !textOverlay.highlight ? `:borderw=${Math.max(2, Math.round(fontPx * 0.06))}:bordercolor=black@0.7` : "";
+      drawtext =
+        `,drawtext=fontfile=font.ttf:text='${t}':fontcolor=${textOverlay.color}:fontsize=${fontPx}:x=${x}:y=${y}${box}${bold}`;
+    } catch (e) {
+      console.warn("[export] Skipping text overlay due to font load error", e);
+    }
   }
 
   let filter: string;
@@ -211,8 +222,11 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
     outputName,
   ];
 
-  await ffmpeg.exec(args);
+  console.log("[export] running ffmpeg", args.join(" "));
+  const code = await ffmpeg.exec(args);
+  console.log("[export] ffmpeg exec returned with code:", code);
   const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
+  console.log("[export] output bytes:", data.byteLength);
   ffmpeg.off("progress", progressHandler);
   ffmpeg.off("log", logHandler);
 
