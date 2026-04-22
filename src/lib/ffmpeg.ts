@@ -45,9 +45,9 @@ export const ASPECT_PRESETS: Record<
   AspectRatio,
   { label: string; sublabel: string; w: number; h: number }
 > = {
-  "9:16": { label: "TikTok / Reels (9:16)", sublabel: "Best for vertical video", w: 1080, h: 1920 },
-  "1:1": { label: "Instagram Post (1:1)", sublabel: "Square feed post", w: 1080, h: 1080 },
-  "4:5": { label: "Instagram Feed (4:5)", sublabel: "Most common IG format", w: 1080, h: 1350 },
+  "9:16": { label: "TikTok / Reels (9:16)", sublabel: "Best for vertical video", w: 720, h: 1280 },
+  "1:1": { label: "Instagram Post (1:1)", sublabel: "Square feed post", w: 720, h: 720 },
+  "4:5": { label: "Instagram Feed (4:5)", sublabel: "Most common IG format", w: 720, h: 900 },
 };
 
 export function formatTime(s: number): string {
@@ -116,11 +116,11 @@ function escapeDrawtext(s: string): string {
 function getReducedPreset(aspect: AspectRatio) {
   switch (aspect) {
     case "9:16":
-      return { w: 720, h: 1280 };
+      return { w: 540, h: 960 };
     case "1:1":
-      return { w: 720, h: 720 };
+      return { w: 540, h: 540 };
     case "4:5":
-      return { w: 720, h: 900 };
+      return { w: 540, h: 675 };
   }
 }
 
