@@ -72,9 +72,12 @@ const Index = () => {
       toast.success("Export complete. Your clip is ready.");
     } catch (err) {
       console.error(err);
+      const message = err instanceof Error
+        ? err.message.slice(0, 280)
+        : "Something went wrong while processing your video. Try a shorter clip or a smaller source file.";
       setExportState({
         status: "error",
-        message: "Something went wrong while processing your video. Try trimming a shorter clip or using MP4 format.",
+        message,
       });
       toast.error("Export failed");
     }

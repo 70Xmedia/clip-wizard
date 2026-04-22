@@ -45,9 +45,9 @@ export const ASPECT_PRESETS: Record<
   AspectRatio,
   { label: string; sublabel: string; w: number; h: number }
 > = {
-  "9:16": { label: "TikTok / Reels (9:16)", sublabel: "Best for vertical video", w: 1080, h: 1920 },
-  "1:1": { label: "Instagram Post (1:1)", sublabel: "Square feed post", w: 1080, h: 1080 },
-  "4:5": { label: "Instagram Feed (4:5)", sublabel: "Most common IG format", w: 1080, h: 1350 },
+  "9:16": { label: "TikTok / Reels (9:16)", sublabel: "Best for vertical video", w: 720, h: 1280 },
+  "1:1": { label: "Instagram Post (1:1)", sublabel: "Square feed post", w: 720, h: 720 },
+  "4:5": { label: "Instagram Feed (4:5)", sublabel: "Most common IG format", w: 720, h: 900 },
 };
 
 export function formatTime(s: number): string {
@@ -116,11 +116,11 @@ function escapeDrawtext(s: string): string {
 function getReducedPreset(aspect: AspectRatio) {
   switch (aspect) {
     case "9:16":
-      return { w: 720, h: 1280 };
+      return { w: 540, h: 960 };
     case "1:1":
-      return { w: 720, h: 720 };
+      return { w: 540, h: 540 };
     case "4:5":
-      return { w: 720, h: 900 };
+      return { w: 540, h: 675 };
   }
 }
 
@@ -134,11 +134,18 @@ function buildDrawtextFilter(textOverlay: TextOverlay, H: number) {
   return `drawtext=fontfile=font.ttf:text='${t}':fontcolor=${textOverlay.color}:fontsize=${fontPx}:x=${x}:y=${y}${box}${bold}`;
 }
 
-function buildForegroundChain(W: number, H: number, zoom: number, offsetX: number, offsetY: number) {
-  const z = Math.max(1, zoom);
+function buildForegroundChain(
+  W: number,
+  H: number,
+  zoom: number,
+  offsetX: number,
+  offsetY: number,
+  useCenterCrop = false,
+) {
+  const z = useCenterCrop ? 1 : Math.max(1, zoom);
   const fgScale = `scale=w=${W}*${z}:h=${H}*${z}:force_original_aspect_ratio=increase`;
-  const cropX = `(in_w-${W})/2 + ${offsetX}*(in_w-${W})/2`;
-  const cropY = `(in_h-${H})/2 + ${offsetY}*(in_h-${H})/2`;
+  const cropX = useCenterCrop ? `(in_w-${W})/2` : `(in_w-${W})/2+${offsetX}*(in_w-${W})/2`;
+  const cropY = useCenterCrop ? `(in_h-${H})/2` : `(in_h-${H})/2+${offsetY}*(in_h-${H})/2`;
   const fgCrop = `crop=${W}:${H}:${cropX}:${cropY}`;
   return { fgScale, fgCrop };
 }
@@ -202,16 +209,21 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   const outputName = "output.mp4";
   const reduced = getReducedPreset(aspect);
   const strategies = [
-    { label: "full-requested", w: preset.w, h: preset.h, blur: blurBackground, text: canUseText },
-    { label: "reduced-requested", w: reduced.w, h: reduced.h, blur: blurBackground, text: canUseText },
-    { label: "reduced-no-blur", w: reduced.w, h: reduced.h, blur: false, text: canUseText },
-    { label: "reduced-no-blur-no-text", w: reduced.w, h: reduced.h, blur: false, text: false },
+    { label: "simple-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "simple-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "simple-mpeg4-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: true, stripAudio: false, useCenterCrop: false },
+    { label: "simple-mpeg4-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true, stripAudio: false, useCenterCrop: false },
+    { label: "reduced-text", w: reduced.w, h: reduced.h, blur: false, text: canUseText, useCopyAudio: true, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "reduced-blur", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "reduced-blur-mpeg4", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: true, stripAudio: false, useCenterCrop: false },
+    { label: "center-crop-no-audio", w: reduced.w, h: reduced.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: false, stripAudio: true, useCenterCrop: true },
+    { label: "center-crop-no-audio-mpeg4", w: reduced.w, h: reduced.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true, stripAudio: true, useCenterCrop: true },
   ];
 
   try {
     for (let i = 0; i < strategies.length; i += 1) {
       const strategy = strategies[i];
-      const { fgScale, fgCrop } = buildForegroundChain(strategy.w, strategy.h, zoom, offsetX, offsetY);
+      const { fgScale, fgCrop } = buildForegroundChain(strategy.w, strategy.h, zoom, offsetX, offsetY, strategy.useCenterCrop);
       const drawtext = strategy.text && textOverlay ? `,${buildDrawtextFilter(textOverlay, strategy.h)}` : "";
 
       let args: string[];
@@ -228,13 +240,12 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
           "-t", String(duration),
           "-filter_complex", filter,
           "-map", "[outv]",
-          "-map", "0:a?",
-          "-c:v", "libx264",
+          ...(strategy.stripAudio ? ["-an"] : ["-map", "0:a?"]),
+          "-c:v", strategy.useNativeMpeg4 ? "mpeg4" : "libx264",
           "-preset", "ultrafast",
-          "-crf", strategy.w < preset.w ? "30" : "28",
+          ...(strategy.useNativeMpeg4 ? ["-q:v", strategy.w < preset.w ? "10" : "8"] : ["-crf", strategy.w < preset.w ? "31" : "29"]),
           "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "96k",
+          ...(strategy.stripAudio ? [] : strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
           "-movflags", "+faststart",
           outputName,
         ];
@@ -246,13 +257,12 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
           "-t", String(duration),
           "-vf", vf,
           "-map", "0:v:0",
-          "-map", "0:a?",
-          "-c:v", "libx264",
+          ...(strategy.stripAudio ? ["-an"] : ["-map", "0:a?"]),
+          "-c:v", strategy.useNativeMpeg4 ? "mpeg4" : "libx264",
           "-preset", "ultrafast",
-          "-crf", strategy.w < preset.w ? "30" : "28",
+          ...(strategy.useNativeMpeg4 ? ["-q:v", strategy.w < preset.w ? "10" : "8"] : ["-crf", strategy.w < preset.w ? "31" : "29"]),
           "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "96k",
+          ...(strategy.stripAudio ? [] : strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
           "-movflags", "+faststart",
           outputName,
         ];
