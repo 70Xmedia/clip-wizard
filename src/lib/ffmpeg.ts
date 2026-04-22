@@ -84,19 +84,23 @@ export interface TextOverlay {
   highlight: boolean;
 }
 
-const FONT_REGULAR_URL = "https://cdn.jsdelivr.net/npm/@fontsource/inter@5.0.18/files/inter-latin-400-normal.woff";
-// drawtext needs TTF/OTF; use a TTF
-const FONT_TTF_URL = "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf";
-const FONT_TTF_BOLD_URL = FONT_TTF_URL; // variable font handles weight
+// drawtext requires TTF/OTF. Fontsource ships static TTFs that work in ffmpeg.wasm.
+const FONT_TTF_URL =
+  "https://cdn.jsdelivr.net/npm/@fontsource/inter@5.0.18/files/inter-latin-700-normal.ttf";
 
 let fontsLoaded = false;
 async function ensureFonts(ffmpeg: FFmpeg) {
   if (fontsLoaded) return;
-  const res = await fetch(FONT_TTF_URL);
-  if (!res.ok) throw new Error("Failed to load font");
-  const buf = new Uint8Array(await res.arrayBuffer());
-  await ffmpeg.writeFile("font.ttf", buf);
-  fontsLoaded = true;
+  try {
+    const res = await fetch(FONT_TTF_URL);
+    if (!res.ok) throw new Error(`Font fetch failed: HTTP ${res.status}`);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    await ffmpeg.writeFile("font.ttf", buf);
+    fontsLoaded = true;
+  } catch (e) {
+    console.warn("[ffmpeg] Could not load font, text overlay will be skipped:", e);
+    throw e;
+  }
 }
 
 function escapeDrawtext(s: string): string {
