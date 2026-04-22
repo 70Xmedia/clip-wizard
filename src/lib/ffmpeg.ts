@@ -134,11 +134,18 @@ function buildDrawtextFilter(textOverlay: TextOverlay, H: number) {
   return `drawtext=fontfile=font.ttf:text='${t}':fontcolor=${textOverlay.color}:fontsize=${fontPx}:x=${x}:y=${y}${box}${bold}`;
 }
 
-function buildForegroundChain(W: number, H: number, zoom: number, offsetX: number, offsetY: number) {
-  const z = Math.max(1, zoom);
+function buildForegroundChain(
+  W: number,
+  H: number,
+  zoom: number,
+  offsetX: number,
+  offsetY: number,
+  useCenterCrop = false,
+) {
+  const z = useCenterCrop ? 1 : Math.max(1, zoom);
   const fgScale = `scale=w=${W}*${z}:h=${H}*${z}:force_original_aspect_ratio=increase`;
-  const cropX = `(in_w-${W})/2 + ${offsetX}*(in_w-${W})/2`;
-  const cropY = `(in_h-${H})/2 + ${offsetY}*(in_h-${H})/2`;
+  const cropX = useCenterCrop ? `(in_w-${W})/2` : `(in_w-${W})/2+${offsetX}*(in_w-${W})/2`;
+  const cropY = useCenterCrop ? `(in_h-${H})/2` : `(in_h-${H})/2+${offsetY}*(in_h-${H})/2`;
   const fgCrop = `crop=${W}:${H}:${cropX}:${cropY}`;
   return { fgScale, fgCrop };
 }
@@ -202,20 +209,21 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   const outputName = "output.mp4";
   const reduced = getReducedPreset(aspect);
   const strategies = [
-    { label: "simple-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: false },
-    { label: "simple-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: false },
-    { label: "simple-mpeg4-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: true },
-    { label: "simple-mpeg4-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true },
-    { label: "reduced-text", w: reduced.w, h: reduced.h, blur: false, text: canUseText, useCopyAudio: true, useNativeMpeg4: false },
-    { label: "reduced-blur", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: false },
-    { label: "reduced-blur-mpeg4", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: true },
-    { label: "reduced-last-resort", w: reduced.w, h: reduced.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true },
+    { label: "simple-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "simple-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "simple-mpeg4-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: true, stripAudio: false, useCenterCrop: false },
+    { label: "simple-mpeg4-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true, stripAudio: false, useCenterCrop: false },
+    { label: "reduced-text", w: reduced.w, h: reduced.h, blur: false, text: canUseText, useCopyAudio: true, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "reduced-blur", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: false, stripAudio: false, useCenterCrop: false },
+    { label: "reduced-blur-mpeg4", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: true, stripAudio: false, useCenterCrop: false },
+    { label: "center-crop-no-audio", w: reduced.w, h: reduced.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: false, stripAudio: true, useCenterCrop: true },
+    { label: "center-crop-no-audio-mpeg4", w: reduced.w, h: reduced.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true, stripAudio: true, useCenterCrop: true },
   ];
 
   try {
     for (let i = 0; i < strategies.length; i += 1) {
       const strategy = strategies[i];
-      const { fgScale, fgCrop } = buildForegroundChain(strategy.w, strategy.h, zoom, offsetX, offsetY);
+      const { fgScale, fgCrop } = buildForegroundChain(strategy.w, strategy.h, zoom, offsetX, offsetY, strategy.useCenterCrop);
       const drawtext = strategy.text && textOverlay ? `,${buildDrawtextFilter(textOverlay, strategy.h)}` : "";
 
       let args: string[];
@@ -232,12 +240,12 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
           "-t", String(duration),
           "-filter_complex", filter,
           "-map", "[outv]",
-          "-map", "0:a?",
+          ...(strategy.stripAudio ? ["-an"] : ["-map", "0:a?"]),
           "-c:v", strategy.useNativeMpeg4 ? "mpeg4" : "libx264",
           "-preset", "ultrafast",
           ...(strategy.useNativeMpeg4 ? ["-q:v", strategy.w < preset.w ? "10" : "8"] : ["-crf", strategy.w < preset.w ? "31" : "29"]),
           "-pix_fmt", "yuv420p",
-          ...(strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
+          ...(strategy.stripAudio ? [] : strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
           "-movflags", "+faststart",
           outputName,
         ];
@@ -249,12 +257,12 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
           "-t", String(duration),
           "-vf", vf,
           "-map", "0:v:0",
-          "-map", "0:a?",
+          ...(strategy.stripAudio ? ["-an"] : ["-map", "0:a?"]),
           "-c:v", strategy.useNativeMpeg4 ? "mpeg4" : "libx264",
           "-preset", "ultrafast",
           ...(strategy.useNativeMpeg4 ? ["-q:v", strategy.w < preset.w ? "10" : "8"] : ["-crf", strategy.w < preset.w ? "31" : "29"]),
           "-pix_fmt", "yuv420p",
-          ...(strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
+          ...(strategy.stripAudio ? [] : strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
           "-movflags", "+faststart",
           outputName,
         ];
