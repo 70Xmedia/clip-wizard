@@ -10,6 +10,9 @@ export async function getFFmpeg(): Promise<FFmpeg> {
 
   loadingPromise = (async () => {
     const ffmpeg = new FFmpeg();
+    // Use the single-threaded core so we don't require SharedArrayBuffer
+    // (Lovable preview doesn't set COOP/COEP headers, which would otherwise
+    // cause the multi-threaded core to hang at 0%).
     const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
     await ffmpeg.load({
       coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
