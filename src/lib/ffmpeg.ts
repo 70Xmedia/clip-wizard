@@ -202,10 +202,14 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
   const outputName = "output.mp4";
   const reduced = getReducedPreset(aspect);
   const strategies = [
-    { label: "full-requested", w: preset.w, h: preset.h, blur: blurBackground, text: canUseText },
-    { label: "reduced-requested", w: reduced.w, h: reduced.h, blur: blurBackground, text: canUseText },
-    { label: "reduced-no-blur", w: reduced.w, h: reduced.h, blur: false, text: canUseText },
-    { label: "reduced-no-blur-no-text", w: reduced.w, h: reduced.h, blur: false, text: false },
+    { label: "simple-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: false },
+    { label: "simple-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: false },
+    { label: "simple-mpeg4-copy-audio", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: true, useNativeMpeg4: true },
+    { label: "simple-mpeg4-aac", w: preset.w, h: preset.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true },
+    { label: "reduced-text", w: reduced.w, h: reduced.h, blur: false, text: canUseText, useCopyAudio: true, useNativeMpeg4: false },
+    { label: "reduced-blur", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: false },
+    { label: "reduced-blur-mpeg4", w: reduced.w, h: reduced.h, blur: blurBackground, text: false, useCopyAudio: true, useNativeMpeg4: true },
+    { label: "reduced-last-resort", w: reduced.w, h: reduced.h, blur: false, text: false, useCopyAudio: false, useNativeMpeg4: true },
   ];
 
   try {
@@ -229,12 +233,11 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
           "-filter_complex", filter,
           "-map", "[outv]",
           "-map", "0:a?",
-          "-c:v", "libx264",
+          "-c:v", strategy.useNativeMpeg4 ? "mpeg4" : "libx264",
           "-preset", "ultrafast",
-          "-crf", strategy.w < preset.w ? "30" : "28",
+          ...(strategy.useNativeMpeg4 ? ["-q:v", strategy.w < preset.w ? "10" : "8"] : ["-crf", strategy.w < preset.w ? "31" : "29"]),
           "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "96k",
+          ...(strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
           "-movflags", "+faststart",
           outputName,
         ];
@@ -247,12 +250,11 @@ export async function exportClip(opts: ExportOptions): Promise<Blob> {
           "-vf", vf,
           "-map", "0:v:0",
           "-map", "0:a?",
-          "-c:v", "libx264",
+          "-c:v", strategy.useNativeMpeg4 ? "mpeg4" : "libx264",
           "-preset", "ultrafast",
-          "-crf", strategy.w < preset.w ? "30" : "28",
+          ...(strategy.useNativeMpeg4 ? ["-q:v", strategy.w < preset.w ? "10" : "8"] : ["-crf", strategy.w < preset.w ? "31" : "29"]),
           "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "96k",
+          ...(strategy.useCopyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "96k"]),
           "-movflags", "+faststart",
           outputName,
         ];
